@@ -1,0 +1,1 @@
+# Client gửi gói có điều chỉnh tốc độ + buffer

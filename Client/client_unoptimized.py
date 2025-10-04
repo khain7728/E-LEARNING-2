@@ -1,0 +1,1 @@
+# Client gửi gói với tốc độ cao (chưa tối ưu)
