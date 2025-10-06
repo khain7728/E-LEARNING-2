@@ -1,5 +1,5 @@
 Metric,Before_Optimization,After_Optimization,Improvement_Percent
-Average Delay (ms),413.02,N/A,N/A
-Max Delay (ms),516.02,N/A,N/A
-Std Deviation (ms),78.53,N/A,N/A
-Average Jitter (ms),0.30,N/A,N/A
+Average Delay (ms),400.61,200.89,49.9%
+Max Delay (ms),547.21,263.37,51.9%
+Std Deviation (ms),64.08,30.79,52.0%
+Average Jitter (ms),73.85,35.56,51.8%

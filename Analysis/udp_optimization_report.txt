@@ -1,11 +1,23 @@
 UDP PERFORMANCE OPTIMIZATION ANALYSIS REPORT
 ==================================================
-Generated: 2025-10-07 01:22:43
+Generated: 2025-10-07 01:37:41
 
 UNOPTIMIZED DATA ANALYSIS:
-Total packets: 27663
-Average delay: 413.02 ms
-Min delay: 20.42 ms
-Max delay: 516.02 ms
-Standard deviation: 78.53 ms
-Average jitter: 0.30 ms
+Total packets: 3000
+Average delay: 400.61 ms
+Min delay: 251.60 ms
+Max delay: 547.21 ms
+Standard deviation: 64.08 ms
+Average jitter: 73.85 ms
+
+OPTIMIZED DATA ANALYSIS:
+Total packets: 2800
+Average delay: 200.89 ms
+Min delay: 135.54 ms
+Max delay: 263.37 ms
+Standard deviation: 30.79 ms
+Average jitter: 35.56 ms
+
+IMPROVEMENT ANALYSIS:
+Delay improvement: 49.9%
+Jitter improvement: 51.8%
