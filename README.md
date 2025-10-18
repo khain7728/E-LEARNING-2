@@ -125,53 +125,171 @@ Sau khi chạy thử nghiệm, bạn sẽ thấy sự cải thiện rõ rệt:
 | **Tỷ lệ mất gói** | 5-15% | 1-3% | 70-80% |
 | **Độ ổn định** | Biến động lớn | Ổn định cao | Tốt hơn rõ rệt |
 
-## Kiến thức kỹ thuật
+## Quy trình giao tiếp UDP
 
-### Tối ưu hóa được áp dụng:
+### Mô hình hoạt động
 
-1. **Buffer Size**: Tăng từ default (~8KB) lên 64KB
+```
+┌─────────────┐                          ┌─────────────┐
+│   CLIENT    │                          │   SERVER    │
+└──────┬──────┘                          └──────┬──────┘
+       │                                        │
+       │ 1. Tạo UDP Socket                      │ 1. Tạo UDP Socket
+       │    socket.socket(AF_INET, SOCK_DGRAM)  │    socket.socket(AF_INET, SOCK_DGRAM)
+       │                                        │
+       │ 2. Cấu hình (nếu optimized)            │ 2. Bind địa chỉ và port
+       │    SO_SNDBUF = 65536 (64KB)            │    bind(('127.0.0.1', 5005))
+       │    SO_RCVBUF = 65536 (64KB)            │    settimeout(5)
+       │                                        │
+       │                                        │ 3. Mở file CSV ghi log
+       │                                        │    data/results.csv
+       │                                        │
+       │                                        │ 4. Lắng nghe (recvfrom)
+       │                                        │    Chờ nhận dữ liệu (buffer 1024)...
+       │                                        │
+       │ 3. Gửi gói tin (sendto)                │
+       │ ─────────────────────────────────────> │ 5. Nhận gói tin
+       │   Format: "{packet_id},{send_time}"    │    receive_time = time.time()
+       │   (optimized: ljust(256, b'-'))        │    
+       │                                        │ 6. Parse và tính delay
+       │                                        │    decoded = data.decode().split(',')
+       │                                        │    delay_ms = (receive_time - send_time) * 1000
+       │                                        │
+       │ 4. Delay (nếu optimized)               │ 7. Ghi vào CSV
+       │    time.sleep(1/500) = 0.002s          │    writer.writerow([id, send, recv, delay])
+       │                                        │    f.flush()
+       │                                        │
+       │ 5. Gửi gói tiếp theo (loop)            │ 8. Tiếp tục nhận
+       │ ─────────────────────────────────────> │    recvfrom() trong while True
+       │                                        │
+       │ 6. Hiển thị stats (optimized)          │ 9. Nếu timeout 5s → Break
+       │    Mỗi 2s: "Đã gửi X gói"              │    Đóng file CSV
+       │                                        │
+       │ 7. Kết thúc (Ctrl+C)                   │ 10. Tự động dừng
+       │    In tổng số gói đã gửi               │    In "[SERVER] Hết dữ liệu"
+       │    Đóng socket                         │    Đóng socket
+              └────────────────────────────────────────┘
+```
+
+### Chi tiết từng bước
+
+#### **Phía Server (server.py):**
+
+1. **Khởi tạo Socket UDP**
    ```python
+   server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+   server_socket.bind(('127.0.0.1', 5005))
+   server_socket.settimeout(5.0)  # Timeout 5 giây
+   ```
+
+2. **Mở file CSV để ghi log**
+   ```python
+   with open("data/results.csv", mode="w", newline="", encoding="utf-8") as f:
+       writer = csv.writer(f)
+       writer.writerow(["packet_id", "send_time", "receive_time", "delay_ms"])
+   ```
+
+3. **Nhận và xử lý dữ liệu**
+   ```python
+   while True:
+       data, addr = server_socket.recvfrom(1024)  # Nhận tối đa 1024 bytes
+       receive_time = time.time()
+       
+       # Parse: "packet_id,send_time"
+       decoded = data.decode().strip().split(",")
+       packet_id = int(decoded[0])
+       send_time = float(decoded[1])
+       
+       # Tính delay (ms)
+       delay_ms = (receive_time - send_time) * 1000
+       
+       # Ghi vào CSV
+       writer.writerow([packet_id, send_time, receive_time, round(delay_ms, 3)])
+       f.flush()  # Đảm bảo ghi ngay vào file
+   ```
+
+4. **Xử lý timeout** - Tự động dừng sau 5s không nhận gói
+
+#### **Phía Client chưa tối ưu (client_unoptimized.py):**
+
+1. **Khởi tạo Socket UDP**
+   ```python
+   client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+   ```
+
+2. **Gửi gói tin liên tục KHÔNG CÓ DELAY**
+   ```python
+   packet_id = 0
+   while True:
+       send_time = time.time()
+       message = f"{packet_id},{send_time}"
+       client_socket.sendto(message.encode(), ('127.0.0.1', 5005))
+       packet_id += 1
+       # KHÔNG CÓ time.sleep() → Gửi nhanh nhất có thể
+   ```
+
+3. **Kết quả**: Tốc độ gửi không kiểm soát → Dễ mất gói, jitter cao
+
+#### **Phía Client đã tối ưu (client_optimized.py):**
+
+1. **Khởi tạo với Buffer lớn**
+   ```python
+   client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+   # Tăng buffer lên 64KB
    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
    client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
    ```
 
-2. **Rate Limiting**: Kiểm soát tốc độ gửi 500 gói/giây
+2. **Gửi gói tin có kiểm soát tốc độ**
    ```python
-   interval = 1.0 / PACKETS_PER_SECOND  # 0.002s giữa các gói
-   time.sleep(interval)
+   PACKETS_PER_SECOND = 500
+   PACKET_SIZE = 256
+   interval = 1.0 / PACKETS_PER_SECOND  # 0.002 giây
+   
+   packet_id = 0
+   while True:
+       send_time = time.time()
+       message = f"{packet_id},{send_time}"
+       
+       # Padding thành 256 bytes
+       data = message.encode().ljust(PACKET_SIZE, b'-')
+       
+       client_socket.sendto(data, ('127.0.0.1', 5005))
+       packet_id += 1
+       
+       time.sleep(interval)  # Delay giữa các gói = 0.002s
    ```
 
-3. **Fixed Packet Size**: Gói tin cố định 256 bytes để dễ phân tích
+3. **Hiển thị thống kê real-time**
    ```python
-   data = message.encode().ljust(PACKET_SIZE, b'-')
+   # Mỗi 2 giây hiển thị progress
+   if time.time() - last_display >= 2.0:
+       rate = packet_id / elapsed
+       print(f"Đã gửi {packet_id} gói ({rate:.1f} gói/giây)")
    ```
 
-### Metrics được đo:
-- **Delay**: Thời gian từ lúc gửi đến lúc nhận (ms)
-- **Jitter**: Độ biến thiên delay giữa các gói liên tiếp  
-- **Packet Loss**: Tỷ lệ gói bị mất dựa trên gap trong packet_id
-- **Percentile 95/99**: Delay của 95% và 99% gói tốt nhất
+4. **Kết quả**: Tốc độ ổn định 500 gói/s, giảm mất gói, jitter thấp
 
-## Nhóm phát triển
+### Đặc điểm giao tiếp UDP
 
-- **Nguyễn Quốc Khải**: Server + logging system ✅
-- **Lê Viết Sang**: Client unoptimized ✅  
-- **Nguyễn Thị Thùy Trang**: Client optimized ✅
-- **Nguyễn Đỗ Anh Khoa**: Data analysis + visualization ✅
-- **Huỳnh Thị Quý Trân**: Documentation + testing ✅
+| Đặc điểm | Mô tả |
+|----------|-------|
+| **Connectionless** | Không cần thiết lập kết nối trước khi gửi |
+| **Unreliable** | Không đảm bảo gói tin đến đích |
+| **No ordering** | Gói tin có thể đến không đúng thứ tự |
+| **Fast** | Overhead thấp, tốc độ cao |
+| **Stateless** | Server không lưu trạng thái kết nối |
 
-## Lưu ý khi chạy
+### So sánh UDP vs TCP
 
-1. **Chạy Server trước Client**: Server phải khởi động trước khi client gửi gói
-2. **Dữ liệu ghi đè**: Mỗi lần chạy server sẽ tạo file CSV mới
-3. **Cần Python 3.7+**: Để đảm bảo tương thích với các thư viện
-4. **Firewall**: Đảm bảo port 5005 không bị chặn
-5. **Performance**: Chạy trên localhost để kết quả chính xác nhất
+| Tiêu chí | UDP | TCP |
+|----------|-----|-----|
+| Kết nối | Không cần thiết lập | Cần 3-way handshake |
+| Độ tin cậy | Không đảm bảo | Đảm bảo 100% |
+| Tốc độ | Nhanh hơn | Chậm hơn |
+| Overhead | Thấp (8 bytes header) | Cao (20 bytes header) |
+| Use case | Video, gaming, IoT | File transfer, web, email |
 
-## Mở rộng có thể
+## Kiến thức kỹ thuật
+```
 
-- Thêm nhiều client đồng thời
-- Test với network conditions khác nhau (latency, packet loss)  
-- Thử nghiệm với UDP multicast
-- Implement TCP comparison
-- Real-time monitoring dashboard
